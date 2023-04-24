@@ -19,8 +19,7 @@ const dynamoClient = new DynamoDBClient({ region: "us-east-1" });
 const lexClient = new LexRuntimeServiceClient({ region: "us-east-1" });
 
 
-//TODO: Cambiar esto por nuestro custom name
-async function insertItemToDB(newContact) {
+async function insertToDataBase(newContact) {
 
 	/**@type { PutItemCommandInput } */
 	const params = {
@@ -30,7 +29,6 @@ async function insertItemToDB(newContact) {
 			Telefono: { S: newContact.Telefono },
 			Email: { S: newContact.Email },
 		},
-		//TODO: Cambiar esto por nuestro custom name
 		TableName: "Practica3",
 	};
 
@@ -39,8 +37,7 @@ async function insertItemToDB(newContact) {
 	return dynamoResponse;
 }
 
-//TODO: Cambiar esto por nuestro custom name
-async function getItemsFromDB(slots) {
+async function seachInDatabase(slots) {
 
 	/**@type {string[]} */
 	const filterExpression = [];
@@ -67,7 +64,6 @@ async function getItemsFromDB(slots) {
 
 	/**@type {ScanCommandInput} */
 	const params = {
-		//TODO: Cambiar esto por nuestro custom name
 		TableName: "Practica3",
 		ExpressionAttributeValues: attrValues,
 		FilterExpression: filterExpression.join(" and "),
@@ -87,7 +83,7 @@ router.post("/", async function (req, res) {
 	/**@type {PostTextCommandInput} */
 	const params = {
 		botAlias: "TestBotAlias",
-		botName: "Practica3",
+		botName: "PracticaBot",
 		inputText: req.body.text,
 		userId: sessionId,
 	};
@@ -106,25 +102,23 @@ router.post("/", async function (req, res) {
 		});
 		if (hasAtLeastOneSlot) {
 			// Llamar DynamoDB
-			const contactResponse = await getItemsFromDB(response.slots);
+			const contactResponse = await seachInDatabase(response.slots);
 
 			let responseString = "";
 			if (contactResponse.length == 0) {
-				responseString += "No se encontró ningún contacto con esos datos.";
+				responseString += "Los datos no coincidieron con nuestra base de datos.";
 				return;
 			} else {
-				responseString += `Se encontraron estos contactos:\n`;
+				responseString += `${contactResponse.length}:\n`;
 				contactResponse.forEach((contact) => {
-					responseString += `${contact.Nombre.S} ${contact.Apellido.S}:
-Tel - ${contact.Telefono.S}
-Email - ${contact.Email.S}\n\n`;
+					responseString += `N:${contact.Nombre.S}\nA:${contact.Apellido.S}\nT:${contact.Telefono.S}\n@:${contact.Email.S}\n\n`;
 				});
 			}
 			res.send({ resp: responseString });
 			return;
 		} else {
 			res.send({
-				resp: "Se necesita al menos un dato para poder buscar en tu directorio.",
+				resp: "Necesitamos mas informacion.",
 			});
 		}
 	}
@@ -136,7 +130,7 @@ Email - ${contact.Email.S}\n\n`;
 	}
 
 	if (response.intentName == "CrearContacto") {
-		const newContactResponse = await insertItemToDB(response.slots);
+		const newContactResponse = await insertToDataBase(response.slots);
 		const frontResponse = { resp: response.message };
 		res.send(frontResponse);
 		return;
