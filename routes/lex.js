@@ -1,43 +1,140 @@
-var express = require('express');
+var express = require("express");
 var router = express.Router();
 
-const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { LexRuntimeServiceClient } = require("@aws-sdk/client-lex-runtime-service")
+const {
+	DynamoDBClient,
+	PutItemCommand,
+	PutItemCommandInput,
+	ScanCommand,
+	ScanCommandInput,
+	ScanInput,
+} = require("@aws-sdk/client-dynamodb");
+const {
+	LexRuntimeServiceClient,
+	PostTextCommand,
+	PostTextCommandInput,
+} = require("@aws-sdk/client-lex-runtime-service");
 
-const dynamoClient = new DynamoDBClient({ region: "us-east-1" })
-const lexClient = new LexRuntimeServiceClient({ region: "us-east-1" })
+const dynamoClient = new DynamoDBClient({ region: "us-east-1" });
+const lexClient = new LexRuntimeServiceClient({ region: "us-east-1" });
 
-router.post('/', async function (req, res) {
-	/* @TODO
-		Este metodo será invocado por el FRONT END cada que el usuario nos envia un texto.
-		El texto que el usuario noss envie se recibirá en req.body.text
 
-		Este debera ser enviado al controlador del LEX junto con un Identificador unico de la sesión
-		el cual obtenemos de req.session.id
+async function insertToDataBase(newContact) {
 
-		La logica recomendada para esta sección es:
-			- Enviar a LEX el texto y la sesión y esperar la respuesta.
-			- De cada respusta del BOT validar la INTENCION y el ESTADO DEL DIALOGO a fin de saber que realizar:
+	/**@type { PutItemCommandInput } */
+	const params = {
+		Item: {
+			Nombre: { S: newContact.Nombre },
+			Apellido: { S: newContact.Apellido },
+			Telefono: { S: newContact.Telefono },
+			Email: { S: newContact.Email },
+		},
+		TableName: "Practica3",
+	};
 
-				Ejemplo:
-					 Intención: AgregarContacto
-					 Estado: Fulfilled
-					 Acción: Agregar a la Base de Datos.
+	const command = new PutItemCommand(params);
+	const dynamoResponse = await dynamoClient.send(command);
+	return dynamoResponse;
+}
 
-					 Intención: BusquedaContacto
-					 Estado: Fulfilled
-					 Acción: Buscar en la Base de Datos.
-	  
-					Intennción: AgregarContacto
-					Estado: *
-					Acción: Enviar proximo mensaje del BOT.
-				 
-			- Enviar un JSON de respuestas con el texto a agregar en el chat:             
-	*/
+async function seachInDatabase(slots) {
 
-	res.send({ resp: "RESPUESTA DEL BOT" })
+	/**@type {string[]} */
+	const filterExpression = [];
+	/**@type {ScanInput.ExpressionAttributeValues} */
+	const attrValues = {};
+
+	if (slots.Nombre) {
+		filterExpression.push(`Nombre=:nombre`);
+		attrValues[":nombre"] = { S: slots.Nombre };
+	}
+	if (slots.Apellido) {
+		filterExpression.push(`Apellido=:apellido`);
+		attrValues[":apellido"] = { S: slots.Apellido };
+	}
+	if (slots.Telefono) {
+		filterExpression.push(`Telefono=:telefono`);
+		attrValues[":telefono"] = { S: slots.Telefono };
+	}
+	if (slots.Email) {
+		filterExpression.push(`Email=:email`);
+		attrValues[":email"] = { S: slots.Email };
+	}
+
+
+	/**@type {ScanCommandInput} */
+	const params = {
+		TableName: "Practica3",
+		ExpressionAttributeValues: attrValues,
+		FilterExpression: filterExpression.join(" and "),
+	};
+
+	const command = new ScanCommand(params);
+	const dynamoResponse = await dynamoClient.send(command);
+
+	const contactData = dynamoResponse.Items;
+
+	return contactData;
+}
+
+router.post("/", async function (req, res) {
+	const sessionId = req.session.id;
+
+	/**@type {PostTextCommandInput} */
+	const params = {
+		botAlias: "TestBotAlias",
+		botName: "PracticaBot",
+		inputText: req.body.text,
+		userId: sessionId,
+	};
+
+	const postCommand = new PostTextCommand(params);
+	const response = await lexClient.send(postCommand);
+
+	// Handle intents
+	if (response.intentName == "BuscarContacto") {
+		// Check if we have at least one slot
+		let hasAtLeastOneSlot = false;
+		Object.values(response.slots).forEach((slotValue) => {
+			if (slotValue != null) {
+				hasAtLeastOneSlot = true;
+			}
+		});
+		if (hasAtLeastOneSlot) {
+			// Llamar DynamoDB
+			const contactResponse = await seachInDatabase(response.slots);
+
+			let responseString = "";
+			if (contactResponse.length == 0) {
+				responseString += "Los datos no coincidieron con nuestra base de datos.";
+				return;
+			} else {
+				responseString += `${contactResponse.length}:\n`;
+				contactResponse.forEach((contact) => {
+					responseString += `N:${contact.Nombre.S}\nA:${contact.Apellido.S}\nT:${contact.Telefono.S}\n@:${contact.Email.S}\n\n`;
+				});
+			}
+			res.send({ resp: responseString });
+			return;
+		} else {
+			res.send({
+				resp: "Necesitamos mas informacion.",
+			});
+		}
+	}
+
+	if (response.dialogState != "Fulfilled") {
+		const frontResponse = { resp: response.message };
+		res.send(frontResponse);
+		return;
+	}
+
+	if (response.intentName == "CrearContacto") {
+		const newContactResponse = await insertToDataBase(response.slots);
+		const frontResponse = { resp: response.message };
+		res.send(frontResponse);
+		return;
+	}
 });
 
 module.exports = router;
-
-
